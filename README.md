@@ -57,3 +57,22 @@ Use the Git tool window to review, commit, and push your changes. For example, c
 Finally, verify on GitHub (at github.com/skdevelopers/translation-service) that all files, including this README, are present.
 
 Following these steps ensures that your Laravel project is properly set up, thoroughly tested, and ready to be run on any new computer.
+
+Explanation & Testing for Large Datasets
+Docker Setup:
+
+The Dockerfile builds your Laravel application using PHP 8.4 with FPM. It installs necessary PHP extensions and Composer, sets the working directory, and installs dependencies.
+
+The docker-compose.yml file defines two services: the app (Laravel) and db (MySQL). This configuration ensures that your application runs in an isolated environment and can be easily scaled.
+
+PHPDocs:
+All controllers and test files include PHPDoc annotations to clearly document method parameters, return types, and overall functionality in compliance with PSR-12 standards.
+
+Testing with 100,000 Records:
+Our feature test for export (see testExportPerformance() in the TranslationControllerTest) is configured to seed the database with 100,000 records. This allows you to measure performance (ensuring the export completes in under 0.5 seconds) and validate that the export endpoint can handle large datasets efficiently.
+
+Running Tests:
+Once your Docker containers are up and running (using docker-compose up -d), you can run your tests from within the container (or by connecting to the container):
+
+docker-compose exec app php artisan test
+This command will execute your unit and feature tests, including those that seed 100,000 records, ensuring your application's performance meets the criteria.

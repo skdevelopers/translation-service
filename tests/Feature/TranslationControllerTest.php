@@ -19,7 +19,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
  * - Updating an existing translation (update endpoint)
  * - Deletion of a translation (delete endpoint)
  * - Searching translations based on specific criteria (search endpoint)
- * - Exporting all translations (export endpoint)
+ * - Exporting all translations (export endpoint), including performance testing with 100,000 records.
  *
  * @package Tests\Feature
  */
@@ -30,9 +30,9 @@ class TranslationControllerTest extends TestCase
     /**
      * Authenticate a user for the test.
      *
-     * @return \App\Models\User
+     * @return \App\Models\User The authenticated user.
      */
-    protected function authenticateUser()
+    protected function authenticateUser(): User
     {
         $user = User::factory()->create();
         Sanctum::actingAs($user);
@@ -139,9 +139,47 @@ class TranslationControllerTest extends TestCase
     }
 
     /**
-     * Test that the export endpoint returns all translations.
+     * Test that the export endpoint returns all translations efficiently.
      *
-     * This test ensures that when 10 translations are created, the export endpoint returns exactly 10 records.
+     * This test seeds the database with 100,000 records and measures the time taken
+     * by the export endpoint to generate and serve the JSON file. It asserts that the
+     * response status is 200 and that the export completes in less than 0.5 seconds.
+     * It also verifies that the exported file contains a valid JSON array.
+     *
+     * @return void
+     */
+    public function testExportPerformance(): void
+    {
+        $this->authenticateUser();
+
+        // Seed a larger dataset (100,000 records for performance testing)
+        Translation::factory()->count(100000)->create();
+
+        $start = microtime(true);
+        $response = $this->get('/api/translations/export');
+        $duration = microtime(true) - $start;
+
+        // Assert that the response is successful and the duration is less than 0.5 seconds.
+        $response->assertStatus(200);
+        $this->assertLessThan(0.5, $duration, "Export endpoint took {$duration} seconds, exceeding 0.5 seconds.");
+
+        // Get the exported file from the response.
+        $file = $response->getFile();
+        $this->assertNotNull($file, "Exported file is not available.");
+
+        // Read the content of the file.
+        $content = file_get_contents($file->getPathname());
+        $data = json_decode($content, true);
+
+        // Ensure that decoding was successful and the file contains an array.
+        $this->assertIsArray($data);
+    }
+
+    /**
+     * Test that the export endpoint returns exactly 10 translations.
+     *
+     * This test ensures that when 10 translations are created, the export endpoint
+     * returns a file which, when read and decoded, contains exactly 10 records.
      *
      * @return void
      */
@@ -149,9 +187,23 @@ class TranslationControllerTest extends TestCase
     {
         $this->authenticateUser();
 
+        // Create 10 translations.
         Translation::factory()->count(10)->create();
-        $response = $this->getJson('/api/translations/export');
-        $response->assertStatus(200)
-            ->assertJsonCount(10);
+
+        // Perform a GET request to the export endpoint.
+        $response = $this->get('/api/translations/export');
+        $response->assertStatus(200);
+
+        // Get the exported file from the response.
+        $file = $response->getFile();
+        $this->assertNotNull($file, "Exported file is not available.");
+
+        // Read the content of the file.
+        $content = file_get_contents($file->getPathname());
+        $data = json_decode($content, true);
+
+        // Ensure that decoding was successful and exactly 10 records were exported.
+        $this->assertIsArray($data);
+        $this->assertCount(10, $data);
     }
 }
