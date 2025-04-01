@@ -3,9 +3,9 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\TranslationController;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 use App\Models\User;
 use App\Models\Translation;
@@ -165,6 +165,12 @@ class TranslationControllerTest extends TestCase
         $duration = microtime(true) - $start;
 
         $this->assertLessThan(0.5, $duration);
+
+        $this->assertLessThan(
+            2.0, // Adjust based on your server capabilities
+            $duration,
+            "Export took {$duration}s for 100k records"
+        );
     }
 
     /**
@@ -199,6 +205,35 @@ class TranslationControllerTest extends TestCase
     }
 
     /**
+     * Test export with different dataset sizes.
+     *
+     * *
+     * @param int $count
+     * @param int $expectedMinSize
+     * @return void
+     */
+    #[DataProvider('translationCountProvider')]
+    public function testExportWithDifferentSizes(int $count, int $expectedMinSize): void
+    {
+        $this->authenticateUser();
+
+        Translation::factory()->count($count)->create();
+
+        $response = $this->get('/api/translations/export');
+        $response->assertStatus(200)
+            ->assertHeader('Content-Type', 'application/json');
+
+        // Get and validate Content-Length
+        $contentLength = $response->headers->get('Content-Length');
+        $this->assertNotNull($contentLength, 'Content-Length header is missing');
+        $this->assertGreaterThanOrEqual(
+            $expectedMinSize,
+            (int)$contentLength,
+            "Expected content length to be at least $expectedMinSize, got $contentLength"
+        );
+    }
+
+    /**
      * Test that the export endpoint returns exactly 10 translations.
      *
      * This test ensures that when 10 translations are created, the export endpoint
@@ -213,5 +248,44 @@ class TranslationControllerTest extends TestCase
             unlink(storage_path('app/translations_export.json'));
         }
         parent::tearDown();
+    }
+
+    /**
+     * Data provider for export size tests.
+     *
+     * Calculates approximate JSON size based on:
+     * - Small: 10 records (~1.5KB)
+     * - Medium: 1,000 records (~150KB)
+     * - Large: 100,000 records (~15MB)
+     */
+    public static function translationCountProvider(): array
+    {
+
+        // Use exact exported structure without timestamps
+        $template = [
+            'id' => 1,
+            'locale' => 'en',
+            'key' => 'test_key',
+            'value' => 'test_value',
+            'tags' => []
+        ];
+
+        // Calculate with minified JSON
+        $baseSize = strlen(json_encode($template));
+
+        return [
+            'small dataset' => [
+                10,
+                (strlen('[]') + ($baseSize * 10) + (9)) // 9 commas
+        ],
+            'medium dataset' => [
+                1000,
+                (strlen('[]') + ($baseSize * 1000) + (999))
+        ],
+            'large dataset' => [
+                100000,
+                (strlen('[]') + ($baseSize * 100000) + (99999))
+        ]
+        ];
     }
 }
