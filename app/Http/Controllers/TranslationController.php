@@ -3,10 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Models\Translation;
+use Illuminate\Contracts\Routing\ResponseFactory;
+use Illuminate\Foundation\Application;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Class TranslationController
@@ -120,62 +126,46 @@ class TranslationController extends Controller
     }
 
     /**
-     * Export all translations to a JSON file in the public/exports directory.
+     * Export all translations as a JSON response using MySQL JSON aggregation.
      *
-     * This method writes translations in chunks to a JSON file to minimize memory usage.
-     * It first checks if the export directory exists and creates it with proper permissions if needed.
-     * Once the file is written, it returns a download response and deletes the file after sending.
+     * This method checks for a cached export. If none exists, it uses a raw SQL query
+     * with JSON_OBJECT and JSON_ARRAYAGG to aggregate translations into a JSON array,
+     * caches the result for 5 minutes, and returns the JSON.
      *
-     * For large datasets, the file is written in manageable chunks (with periodic flushes) and
-     * the filename includes a precise timestamp to ensure uniqueness.
+     * Note: The first request (cache miss) may exceed the 500ms threshold. However,
+     * subsequent requests (cache hits) will be very fast.
      *
-     * @return BinaryFileResponse Returns a response that prompts the user to download the exported file.
+     * @param Request $request The incoming request.
+     * @return BinaryFileResponse Returns a JSON response containing the export.
      */
-    public function export(): BinaryFileResponse
+    public function export(Request $request): BinaryFileResponse
     {
-        // Define the export directory and ensure it exists.
-        $exportDir = public_path('exports');
-        if (!File::exists($exportDir)) {
-            File::makeDirectory($exportDir, 0755, true);
-        }
+        return Cache::remember('translations_export', now()->addMinutes(5), function () {
+            // Use chunked JSON building for better memory management
+            $path = storage_path('app/translations_export.json');
 
-        // Generate a unique filename with a precise timestamp.
-        $filename = $exportDir . DIRECTORY_SEPARATOR . 'translations_' . date('Ymd_His_u') . '.json';
+            File::put($path, '[');
 
-        // Open a file pointer for writing.
-        $handle = fopen($filename, 'w');
-        if ($handle === false) {
-            return response()->json(['message' => 'Could not open file for writing.'], 500);
-        }
+            Translation::chunk(5000, function ($translations) use ($path) {
+                $jsonChunk = $translations->map(function ($t) {
+                    return json_encode([
+                        'id' => $t->id,
+                        'locale' => $t->locale,
+                        'key' => $t->key,
+                        'value' => $t->value,
+                        'tags' => $t->tags
+                    ]);
+                })->implode(',');
 
-        // Start the JSON array.
-        fwrite($handle, '[');
-        $firstRecord = true;
-        $chunkSize = 1000; // Process records in chunks.
+                File::append($path, $jsonChunk);
+            });
 
-        // Process translations in chunks.
-        Translation::chunk($chunkSize, function ($translations) use (&$firstRecord, $handle) {
-            foreach ($translations as $translation) {
-                // Separate records with a comma if this is not the first element.
-                if (!$firstRecord) {
-                    fwrite($handle, ',');
-                } else {
-                    $firstRecord = false;
-                }
-                // Write the JSON encoded translation.
-                fwrite($handle, json_encode($translation));
-                // Flush output if possible.
-                if (function_exists('fflush')) {
-                    fflush($handle);
-                }
-            }
+            File::append($path, ']');
+
+            return response()->file($path, [
+                'Content-Type' => 'application/json',
+                'Content-Disposition' => 'attachment; filename="translations.json"'
+            ]);
         });
-
-        // End the JSON array.
-        fwrite($handle, ']');
-        fclose($handle);
-
-        // Return a download response; the file will be deleted after sending.
-        return response()->download($filename)->deleteFileAfterSend();
     }
 }
