@@ -19,7 +19,7 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 WORKDIR /var/www
 
 # Copy existing application directory contents.
-COPY . .
+COPY tests/Unit .
 
 # Install Laravel dependencies.
 RUN composer install --no-interaction --prefer-dist --optimize-autoloader
